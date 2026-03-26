@@ -1,0 +1,58 @@
+\documentclass[12pt,a4paper]{article}
+
+% Page geometry
+\usepackage[
+  top=2.5cm,
+  bottom=2.5cm,
+  left=2.5cm,
+  right=2.5cm
+]{geometry}
+
+% Load preamble and title page
+\input{paper/preamble}
+\input{paper/titlepage}
+
+\begin{document}
+
+\maketitle
+
+% Abstract
+\begin{abstract}
+\input{paper/sections/01_abstract}
+\end{abstract}
+
+\vspace{0.3cm}
+
+%\noindent
+%\textbf{JEL Codes:} XXX, YYY, ZZZ \\
+%\textbf{Keywords:} keyword1; keyword2; keyword3
+
+\newpage
+
+% ============================
+% Main Sections
+% ============================
+
+\section{Introduction}
+\input{paper/sections/02_introduction}
+
+\section{Literature}
+\input{paper/sections/03_literature}
+
+\section{Data}
+\input{paper/sections/04_data}
+
+\section{Empirical Strategy}
+\input{paper/sections/05_empirical_strategy}
+
+\section{Conclusion}
+\input{paper/sections/06_conclusion}
+
+% ============================
+% Bibliography
+% ============================
+
+\newpage
+\printbibliography
+
+\end{document}

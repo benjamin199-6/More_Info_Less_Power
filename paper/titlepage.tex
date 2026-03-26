@@ -1,0 +1,61 @@
+% ====================================================
+% Title Page – Working Paper Template
+% ====================================================
+
+\makeatletter
+\patchcmd{\@footnotetext}{\footnotesize}{\scriptsize}{}{}
+\makeatother
+
+% ----------------------
+% Title
+% ----------------------
+\title{
+    \vspace{0cm}
+    Title of the Paper \\
+    \vspace{0.5cm}
+    \Large Subtitle (optional) \\
+    \vspace{1.5cm}
+}
+
+% ----------------------
+% Authors
+% ----------------------
+\author{
+    \textbf{Benjamin Kirchler}\textsuperscript{a}
+    \and
+    \textbf{Coauthor Name}\textsuperscript{b}
+    \and
+    \textbf{Coauthor Name}\textsuperscript{c}
+}
+
+% ----------------------
+% Affiliations
+% ----------------------
+\makeatletter
+\let\oldmakefnmark\@makefnmark
+\renewcommand{\@makefnmark}{}
+
+\footnotetext{%
+    \textsuperscript{a}Energieinstitut an der JKU Linz,  
+    Altenberger Straße 69,  
+    4040 Linz, Austria;  
+    \texttt{kirchler@energieinstitut-linz.at}%
+}
+
+\footnotetext{%
+    \textsuperscript{b}Affiliation, Address, City, Country;  
+    \texttt{email@institution.edu}%
+}
+
+\footnotetext{%
+    \textsuperscript{c}Affiliation, Address, City, Country;  
+    \texttt{email@institution.edu}%
+}
+
+\let\@makefnmark\oldmakefnmark
+\makeatother
+
+% ----------------------
+% Date
+% ----------------------
+\date{\today}

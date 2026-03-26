@@ -1,0 +1,17 @@
+# R
+.Rhistory
+.RData
+.Rproj.user/
+
+# Data (never commit real data)
+data/interim/*
+data/final/*
+!data/**/.keep
+
+# Output
+output/*
+!output/**/.keep
+
+# OS / editor
+.DS_Store
+Thumbs.db
