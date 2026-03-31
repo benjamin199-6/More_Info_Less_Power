@@ -1,12 +1,5 @@
 ###############################################################################
 # 04_analysis_prep.R
-#
-# Purpose:
-# - Final cleaning for estimation
-# - Track sample construction (paper-ready)
-# - Test selection bias (GLM only)
-# - Diagnose zero-consumption issues (before/after)
-# - Generate figures
 ###############################################################################
 
 # ---------------------------------------------------------------------------
@@ -24,7 +17,6 @@ message("Running 04_analysis_prep.R ...")
 dt <- readRDS(file.path(paths$data_processed, "dt_analysis.rds"))
 setDT(dt)
 
-# Ensure figure path exists
 paths$figures <- file.path(paths$output_figures)
 dir.create(paths$figures, showWarnings = FALSE, recursive = TRUE)
 
@@ -40,7 +32,6 @@ track_sample <- function(dt, step_name) {
 }
 
 run_selection_test <- function(data, var, step_name) {
-  
   data[, group := relevel(factor(group), ref = "App")]
   
   model <- glm(
@@ -60,9 +51,7 @@ run_selection_test <- function(data, var, step_name) {
   return(res)
 }
 
-# Zero-diagnostic function
 plot_zero_days <- function(dt, consumption_var, label, filename) {
-  
   daily <- dt[, .(
     total_daily_consumption = sum(get(consumption_var), na.rm = TRUE)
   ), by = .(date, household)]
@@ -74,11 +63,7 @@ plot_zero_days <- function(dt, consumption_var, label, filename) {
   p <- ggplot(freq, aes(date, frequency)) +
     geom_col(fill = "black") +
     theme_minimal() +
-    labs(
-      title = label,
-      x = "Date",
-      y = "Households with zero daily consumption"
-    ) +
+    labs(title = label, x = "Date", y = "Zero-consumption households") +
     theme(axis.text.x = element_text(angle = 90, hjust = 1))
   
   ggsave(file.path(paths$figures, filename), p, width = 8, height = 5)
@@ -92,11 +77,7 @@ selection_tracking <- list()
 # ---------------------------------------------------------------------------
 # 1. Time variables
 # ---------------------------------------------------------------------------
-dt[, datetime := as.POSIXct(
-  paste(year, month, day, hour),
-  format = "%Y %m %d %H"
-)]
-
+dt[, datetime := as.POSIXct(paste(year, month, day, hour), format = "%Y %m %d %H")]
 dt[, date := as.Date(datetime)]
 
 # ---------------------------------------------------------------------------
@@ -109,7 +90,6 @@ dt[, group := fcase(
 )]
 
 dt[, group := factor(group)]
-
 hh_group <- unique(dt[, .(household, group)])
 
 sample_tracking[[1]] <- track_sample(dt, "1. Initial sample")
@@ -131,13 +111,11 @@ dt[, post := fcase(
 )]
 
 # ---------------------------------------------------------------------------
-# 4. Sample cleaning
+# 4. Cleaning pipeline
 # ---------------------------------------------------------------------------
 
 # ---- 4.1 Remove PV ---------------------------------------------------------
-dt_before <- copy(dt)
-
-hh_pv <- unique(dt_before[, .(household, pv)])
+hh_pv <- unique(dt[, .(household, pv)])
 hh_pv <- hh_group[hh_pv, on = "household"]
 hh_pv[, removed := as.integer(pv == 1)]
 
@@ -150,7 +128,7 @@ sample_tracking[[2]] <- track_sample(dt, "2. Remove PV")
 dt <- dt[group %in% c("Control", "App")]
 sample_tracking[[3]] <- track_sample(dt, "3. Keep Control vs App")
 
-# ---- 4.3 Coverage filter ---------------------------------------------------
+# ---- 4.3 Coverage ----------------------------------------------------------
 hh_cov <- dt[, .(
   first = min(datetime),
   last  = max(datetime),
@@ -168,39 +146,34 @@ selection_tracking[[2]] <- run_selection_test(hh_cov, "removed", "Coverage filte
 dt <- dt[household %in% hh_cov[coverage > 0.9, household]]
 sample_tracking[[4]] <- track_sample(dt, "4. Coverage > 90%")
 
-# ---- 4.4 Diagnose + remove bad days ----------------------------------------
+# ---- 4.4 Remove bad days ---------------------------------------------------
+zero_before <- plot_zero_days(dt, "consumption",
+                              "Before removing bad days",
+                              "zeros_before_cleaning.pdf")
 
-zero_threshold <- 70
-
-zero_before <- plot_zero_days(
-  dt,
-  "consumption",
-  "Before removing bad days",
-  "zeros_before_cleaning.pdf"
-)
-
-bad_days <- zero_before[frequency > zero_threshold, date]
-
+bad_days <- zero_before[frequency > 70, date]
 dt <- dt[!date %in% bad_days]
+
 sample_tracking[[5]] <- track_sample(dt, "5. Remove bad days")
 
-# ---- 4.5 Preserve raw + clean zeros ----------------------------------------
-
+# ---- 4.5 Clean zeros -------------------------------------------------------
 dt[, consumption_all := consumption]
 dt[, consumption := fifelse(consumption == 0, NA_real_, consumption)]
 
 sample_tracking[[6]] <- track_sample(dt, "6. Replace zeros")
 
-zero_after <- plot_zero_days(
-  dt,
-  "consumption",
-  "After removing bad days and zeros",
-  "zeros_after_cleaning.pdf"
-)
+plot_zero_days(dt, "consumption",
+               "After cleaning",
+               "zeros_after_cleaning.pdf")
 
-# ---- 4.6 Remove outliers ---------------------------------------------------
+# ---------------------------------------------------------------------------
+# 4.6 Outlier detection (dual approach)
+# ---------------------------------------------------------------------------
+message("Identifying outliers...")
+
 pre <- dt[post == 0]
 
+# --- LEVEL OUTLIERS (main)
 hh_mean <- pre[, .(
   mean_cons = mean(consumption, na.rm = TRUE)
 ), by = household]
@@ -210,16 +183,59 @@ hh_mean <- hh_group[hh_mean, on = "household"]
 mu  <- mean(hh_mean$mean_cons, na.rm = TRUE)
 sd_ <- sd(hh_mean$mean_cons, na.rm = TRUE)
 
-outliers <- hh_mean[abs(mean_cons - mu) > 3 * sd_, household]
+outliers_level <- hh_mean[
+  abs(mean_cons - mu) > 3 * sd_,
+  household
+]
 
-hh_mean[, removed := as.integer(household %in% outliers)]
+# --- PATTERN OUTLIERS
+hh_hour <- pre[, .(
+  hourly_cons = mean(consumption, na.rm = TRUE)
+), by = .(household, hour)]
 
-selection_tracking[[3]] <- run_selection_test(hh_mean, "removed", "Outlier removal")
+hour_ref <- hh_hour[, .(
+  mu_hour = mean(hourly_cons, na.rm = TRUE),
+  sd_hour = sd(hourly_cons, na.rm = TRUE)
+), by = hour]
 
-dt <- dt[!household %in% outliers]
-sample_tracking[[7]] <- track_sample(dt, "7. Remove outliers")
+hh_hour <- hour_ref[hh_hour, on = "hour"]
+hh_hour[, z := (hourly_cons - mu_hour) / sd_hour]
 
-# ---- 4.7 Balanced pre-period -----------------------------------------------
+outliers_pattern <- hh_hour[
+  abs(z) > 3,
+  .N,
+  by = household
+][N > 3, household]
+
+outliers_all <- unique(c(outliers_level, outliers_pattern))
+
+# --- TRACKING
+hh_mean[, removed_level := as.integer(household %in% outliers_level)]
+hh_mean[, removed_all   := as.integer(household %in% outliers_all)]
+
+selection_tracking[[3]] <- run_selection_test(
+  hh_mean, "removed_level", "Outliers (level)"
+)
+
+selection_tracking[[4]] <- run_selection_test(
+  hh_mean, "removed_all", "Outliers (level + pattern)"
+)
+
+# ---------------------------------------------------------------------------
+# 4.7 Create TWO datasets
+# ---------------------------------------------------------------------------
+
+dt_main   <- dt[!household %in% outliers_level]
+dt_main %>% group_by(group) %>% summarise(n_distinct(household))
+dt_robust%>% group_by(group) %>% summarise(n_distinct(household))
+dt_robust <- dt[!household %in% outliers_all]
+
+sample_tracking[[7]] <- track_sample(dt_main, "7. Remove outliers (level)")
+
+# Continue pipeline ONLY with main sample
+dt <- copy(dt_main)
+
+# ---- 4.8 Balanced pre-period -----------------------------------------------
 dt <- dt[
   (Tranche1 == 1 & date >= tranche_dates$tranche1 - 20) |
     (Tranche2 == 1 & date >= tranche_dates$tranche2 - 7) |
@@ -241,7 +257,7 @@ dt[, `:=`(
 )]
 
 # ---------------------------------------------------------------------------
-# 6. Combine and save tracking tables
+# 6. Save tracking tables
 # ---------------------------------------------------------------------------
 sample_table    <- rbindlist(sample_tracking)
 selection_table <- rbindlist(selection_tracking)
@@ -249,12 +265,11 @@ selection_table <- rbindlist(selection_tracking)
 print(sample_table)
 print(selection_table)
 
-# fwrite(sample_table,    file.path(paths$output, "sample_construction.csv"))
-# fwrite(selection_table, file.path(paths$output, "selection_tests.csv"))
+# ---------------------------------------------------------------------------
+# 7. Save datasets
+# ---------------------------------------------------------------------------
 
-# ---------------------------------------------------------------------------
-# 7. Save final dataset
-# ---------------------------------------------------------------------------
-saveRDS(dt, file.path(paths$data_processed, "dt_final.rds"))
+saveRDS(dt,         file.path(paths$data_processed, "dt_final.rds"))        # main
+saveRDS(dt_robust,  file.path(paths$data_processed, "dt_final_robust.rds")) # robustness
 
 message("04_analysis_prep.R completed successfully.")

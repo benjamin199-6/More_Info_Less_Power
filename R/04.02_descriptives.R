@@ -39,6 +39,8 @@ message("Loading final hourly data...")
 dt_hourly <- readRDS(file.path(paths$data_processed, "dt_final.rds"))
 setDT(dt_hourly)
 
+
+
 message("Loading 15-min data...")
 dt_15 <- fread(file.path(paths$data_processed, "dt_15min.csv.gz"))
 setDT(dt_15)
@@ -91,6 +93,7 @@ stopifnot(nrow(dup_15) == 0)
 message("Filtering 15-min data to final sample households and time window...")
 
 final_hh <- unique(dt_hourly$household)
+length(final_hh)
 dt_15 <- dt_15[household %in% final_hh]
 
 hh_window <- dt_hourly[, .(
@@ -153,12 +156,14 @@ dt_hourly[, treat_date := fcase(
   default = as.Date(NA)
 )]
 
+
 dt_15[, treat_date := fcase(
   Tranche1 == 1, tranche_dates$tranche1,
   Tranche2 == 1, tranche_dates$tranche2,
   Tranche3 == 1, tranche_dates$tranche3,
   default = as.Date(NA)
 )]
+
 
 # recreate post in 15-min data exactly as in analysis
 dt_15[, post := fcase(
@@ -171,6 +176,16 @@ dt_15[, post := fcase(
 dt_hourly[, rel_day := as.integer(date - treat_date)]
 dt_15[, rel_day := as.integer(date - treat_date)]
 
+# Define tranche variable
+dt_hourly[, tranche := fcase(
+  Tranche1 == 1, "Tranche 1",
+  Tranche2 == 1, "Tranche 2",
+  Tranche3 == 1, "Tranche 3"
+)]
+
+
+dt_hourly %>% group_by(tranche,group) %>% summarise(n_distinct(household))
+
 # ---------------------------------------------------------------------------
 # 7. Keep only Control vs App for main descriptives
 # ---------------------------------------------------------------------------
@@ -180,63 +195,6 @@ dt_15_ca     <- dt_15[group %in% c("Control", "App")]
 dt_hourly_pre <- dt_hourly_ca[post == 0]
 dt_15_pre     <- dt_15_ca[post == 0]
 
-# ---------------------------------------------------------------------------
-# 8. Pre-treatment event-time trends
-# ---------------------------------------------------------------------------
-message("Creating pre-treatment event-time trend graphs...")
-
-dt_hourly_event_pre <- dt_hourly_pre[rel_day >= -20 & rel_day <= -1]
-dt_15_event_pre     <- dt_15_pre[rel_day >= -20 & rel_day <= -1]
-
-plot_hourly_event <- dt_hourly_event_pre[, .(
-  mean_consumption = mean(consumption, na.rm = TRUE)
-), by = .(rel_day, group)]
-
-fig_hourly_event <- ggplot(
-  plot_hourly_event,
-  aes(x = rel_day, y = mean_consumption, color = group)
-) +
-  geom_line(linewidth = 0.9) +
-  geom_vline(xintercept = 0, linetype = "dashed") +
-  scale_color_manual(values = pal2) +
-  theme_minimal() +
-  labs(
-    x = "Days relative to treatment",
-    y = "Mean hourly consumption (kWh)",
-    color = NULL
-  )
-
-ggsave(
-  file.path(fig_dir, "descriptive_pretrend_hourly_eventtime.pdf"),
-  fig_hourly_event,
-  width = 8,
-  height = 5
-)
-
-plot_15_event <- dt_15_event_pre[, .(
-  mean_consumption = mean(consumption, na.rm = TRUE)
-), by = .(rel_day, group)]
-
-fig_15_event <- ggplot(
-  plot_15_event,
-  aes(x = rel_day, y = mean_consumption, color = group)
-) +
-  geom_line(linewidth = 0.9) +
-  geom_vline(xintercept = 0, linetype = "dashed") +
-  scale_color_manual(values = pal2) +
-  theme_minimal() +
-  labs(
-    x = "Days relative to treatment",
-    y = "Mean 15-min consumption (kWh)",
-    color = NULL
-  )
-
-ggsave(
-  file.path(fig_dir, "descriptive_pretrend_15min_eventtime.pdf"),
-  fig_15_event,
-  width = 8,
-  height = 5
-)
 
 # ---------------------------------------------------------------------------
 # 9. Pre-treatment load curves
@@ -295,6 +253,93 @@ ggsave(
 
 message("Creating 15-min pre-treatment load curves by tranche...")
 
+
+
+###############################################################################
+# Pre-treatment comparison plot by tranche (calendar time)
+###############################################################################
+names(dt_hourly_pre_tranche)
+# ---------------------------------------------------------------------------
+# 9b. Pre-treatment hourly comparison by tranche (calendar time)
+#     Plot hourly mean consumption for App vs Control in each tranche
+# ---------------------------------------------------------------------------
+message("Creating hourly pre-treatment comparison by tranche (calendar time)...")
+
+# Keep only Control and App households in the pre-treatment period
+dt_hourly_pre_tranche <- dt_hourly[
+  group %in% c("Control", "App") &
+    post == 0 &
+    !is.na(treat_date)
+]
+
+# Define tranche variable
+dt_hourly_pre_tranche[, tranche := fcase(
+  Tranche1 == 1, "Tranche 1",
+  Tranche2 == 1, "Tranche 2",
+  Tranche3 == 1, "Tranche 3"
+)]
+
+dt_hourly_pre_tranche[, tranche := factor(
+  tranche,
+  levels = c("Tranche 1", "Tranche 2", "Tranche 3")
+)]
+
+# Ensure group order is consistent
+dt_hourly_pre_tranche[, group := factor(group, levels = c("Control", "App"))]
+
+# Aggregate to hourly mean consumption by calendar time, tranche, and group
+plot_hourly_tranche <- dt_hourly_pre_tranche[, .(
+  mean_consumption = mean(consumption, na.rm = TRUE)
+), by = .(datetime, tranche, group)]
+
+N_table <- dt_hourly_pre_tranche[, .(
+  N = uniqueN(household)
+), by = .(tranche, group)]
+
+N_wide <- dcast(N_table, tranche ~ group, value.var = "N")
+
+# Create clean labels
+N_wide[, label := paste0(
+  tranche, " (Control: ", Control, ", App: ", App, ")"
+)]
+
+label_map <- setNames(N_wide$label, N_wide$tranche)
+
+# Plot
+fig_hourly_tranche_pre <- ggplot(
+  plot_hourly_tranche,
+  aes(x = datetime, y = mean_consumption, color = group)
+) +
+  geom_line(linewidth = 0.5, alpha = 0.9) +
+  facet_wrap(
+    ~ tranche,
+    scales = "free_x",
+    ncol = 1,
+    labeller = labeller(tranche = label_map)
+  )+
+  scale_color_manual(values = pal2) +
+  theme_minimal() +
+  labs(
+    x = "Date",
+    y = "Mean hourly consumption (kWh)",
+    color = NULL
+  ) +
+  theme(
+    legend.position = "bottom",
+    strip.text = element_text(face = "bold"),
+    panel.grid.minor = element_blank()
+  )
+
+ggsave(
+  file.path(fig_dir, "descriptive_hourly_pre_by_tranche_calendar.pdf"),
+  fig_hourly_tranche_pre,
+  width = 10,
+  height = 8
+)
+
+
+
+
 # ---------------------------------------------------------------------------
 # 1. Keep pre-treatment observations only
 # ---------------------------------------------------------------------------
@@ -317,131 +362,82 @@ dt_15_pre_tranche[, tranche := factor(tranche,
 
 
 
-# --- t------------------------------------------------------------------------
-# 10. Household-level randomization checks
-# ---------------------------------------------------------------------------
-message("Preparing household-level randomization checks...")
 
+
+
+
+# ---------------------------------------------------------------------------
+# Covariate balance table (Control vs App) – tailored to your data
+# ---------------------------------------------------------------------------
+message("Creating covariate balance table (TableOne)...")
+
+library(data.table)
+library(tableone)
+
+# ---------------------------------------------------------------------------
+# 1. Household-level dataset
+# ---------------------------------------------------------------------------
 hh <- unique(dt_hourly_ca[, .(
   household,
   group,
-  numberofresidents,
-  square_meter,
-  tariff_kwh,
-  tariff_name,
-  splithouse,
-  apartment,
-  singlefamily,
-  home_owned,
-  gas,
-  district,
-  heatPump,
-  electric,
-  biomass,
-  oil,
-  other,
-  water_gas,
-  water_district,
-  water_heatpump,
-  water_electric,
-  water_biomass,
-  water_oil,
-  water_other,
-  dryer,
-  swimmingPool,
-  aquarium,
-  waterBed,
-  sauna,
-  airCondition,
-  deepFreezers,
-  computers,
-  pv_capacity,
-  batterystorage,
-  pev,
-  emotorbike,
-  ebike,
-  pv
+  
+  # Heating
+  gas, district, biomass, oil, electric, heatPump,
+  
+  # Housing
+  home_owned, apartment, singlefamily, splithouse,
+  
+  # Appliances
+  swimmingPool, sauna, airCondition, aquarium, dryer,
+  waterBed, deepFreezers, computers, pev, ebike,
+  
+  # Other
+  tariffgrp, numberofresidents, square_meter
 )])
 
-vars_num <- c(
-  "tariff_kwh", "numberofresidents", "square_meter", "computers", "pv_capacity"
-)
-
-vars_cat <- c(
-  "tariff_name", "splithouse", "apartment", "singlefamily", "home_owned",
-  "gas", "district", "heatPump", "electric", "biomass", "oil", "other",
-  "water_gas", "water_district", "water_heatpump", "water_electric",
-  "water_biomass", "water_oil", "water_other", "dryer", "swimmingPool",
-  "aquarium", "waterBed", "sauna", "airCondition", "deepFreezers",
-  "pev", "emotorbike", "ebike", "pv"
-)
-
-vars_all <- intersect(c(vars_num, vars_cat), names(hh))
-vars_cat <- intersect(vars_cat, names(hh))
-
-hh_raw <- copy(hh)
-
-for (v in vars_cat) {
-  hh[, (v) := factor(get(v))]
-}
-
+# Ensure correct group order
 hh[, group := factor(group, levels = c("Control", "App"))]
 
-tab_rand <- CreateTableOne(
-  vars       = vars_all,
-  strata     = "group",
-  data       = as.data.frame(hh),
-  factorVars = vars_cat,
-  test       = TRUE
-)
-
-rand_txt <- capture.output(
-  print(tab_rand, showAllLevels = TRUE, test = TRUE, smd = TRUE)
-)
-
-writeLines(
-  rand_txt,
-  file.path(tab_dir, "randomization_check_tableone.txt")
-)
-
-hh_counts <- hh[, .(N_households = uniqueN(household)), by = group]
-fwrite(
-  hh_counts,
-  file.path(tab_dir, "randomization_household_counts.csv")
+# ---------------------------------------------------------------------------
+# 2. Variable lists (matching your table structure)
+# ---------------------------------------------------------------------------
+vars <- c(
+  # Heating
+  "gas","district","biomass","oil","electric","heatPump",
+  
+  # Housing
+  "home_owned","apartment","singlefamily","splithouse",
+  
+  # Appliances
+  "swimmingPool","sauna","airCondition","aquarium","dryer",
+  "waterBed","deepFreezers","computers","pev","ebike",
+  
+  "numberofresidents","square_meter"
 )
 
 # ---------------------------------------------------------------------------
-# 11. Binary-variable difference summary
+# 3. Create TableOne (t-tests only, no SMD)
 # ---------------------------------------------------------------------------
-message("Computing binary difference checks...")
-
-binary_vars <- vars_cat[
-  sapply(hh_raw[, ..vars_cat], function(x) {
-    ux <- sort(unique(na.omit(x)))
-    length(ux) <= 2
-  })
-]
-
-binary_results <- rbindlist(lapply(binary_vars, function(v) {
-  tab <- table(hh_raw[[v]], hh_raw$group)
-  
-  pval <- tryCatch(
-    suppressWarnings(chisq.test(tab)$p.value),
-    error = function(e) NA_real_
-  )
-  
-  data.table(
-    variable = v,
-    p_value = pval,
-    mean_control = hh_raw[group == "Control", mean(get(v), na.rm = TRUE)],
-    mean_app     = hh_raw[group == "App", mean(get(v), na.rm = TRUE)]
-  )
-}), fill = TRUE)
-
-fwrite(
-  binary_results,
-  file.path(tab_dir, "randomization_binary_differences.csv")
+tab <- CreateTableOne(
+  vars = vars,
+  strata = "group",
+  data = as.data.frame(hh),
+  test = TRUE
 )
+
+# ---------------------------------------------------------------------------
+# 4. Print clean output
+# ---------------------------------------------------------------------------
+print(
+  tab,
+  showAllLevels = FALSE,
+  test = TRUE,
+  smd = FALSE
+)
+
+
+
+
 
 # ---------------------------------------------------------------------------
 # 12. App engagement table
