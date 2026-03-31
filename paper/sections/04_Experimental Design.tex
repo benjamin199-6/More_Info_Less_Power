@@ -1,0 +1,131 @@
+\subsection{Design and Identification Strategy}
+
+We study the causal effect of information provision on household electricity consumption using a randomized controlled trial (RCT) with a staggered rollout design. Households were randomly assigned to either an information condition (access to a smartphone app) or a control condition (no app access). The intervention was implemented in three tranches with different start dates, allowing us to exploit both cross-sectional and temporal variation in treatment exposure.
+
+Our empirical strategy follows a difference-in-differences (DiD) framework, comparing changes in electricity consumption between treated and control households before and after treatment. Identification relies on random assignment and the assumption that, in the absence of treatment, both groups would have followed parallel consumption trends.
+\subsection{Intervention}
+
+In the field experiment, each household was randomly assigned to one of two conditions.\footnote{Randomization was performed by the utility under the supervision of academic partners using a random number generator.}
+
+\begin{itemize}
+    \item \textbf{Information condition (N = 449):} households received access to a smartphone app providing feedback on electricity consumption
+    \item \textbf{Control condition (N = 443):} households did not receive access to the app
+\end{itemize}
+
+An additional condition included app access combined with energy tariff discounts (N = 504). As the focus of this study is on information provision, these observations are excluded from the present analysis.
+
+\paragraph{Information and salience} Households in the information condition received feedback on electricity consumption in kilowatt-hours (kWh), corresponding monetary costs in euros, and carbon emissions in kilograms of \(CO_{2}\). Due to data transmission processes, information was provided with a delay of up to 24 hours. Users could analyze consumption across different time horizons (day, week, month, year), increasing the salience and interpretability of energy use.
+
+\paragraph{Social comparison}
+The app enabled households to compare their consumption with that of similar households. Expected electricity consumption was estimated using an ordinary least squares (OLS) model based on household characteristics such as dwelling size, appliance ownership, and socioeconomic factors. Households were categorized into efficiency groups and received simplified visual feedback. Those performing better than 80\% of comparable households received positive signals (thumbs-up), while those performing worse received negative signals (thumbs-down).
+
+\paragraph{Gamification and learning}
+To promote active engagement, the app included interactive features. Households could predict their electricity consumption for the following day and received feedback on prediction accuracy. In addition, the app provided information on the energy consumption of 452 appliances and activities, supporting learning about the consequences of specific behaviors. These elements extend beyond passive information provision by encouraging active interaction and reflection.
+
+Electricity consumption was recorded via smart meters at 15-minute intervals. Data were transmitted by the grid operator to the utility hosting the app, with a delay of up to 24 hours. App usage was tracked using Google Analytics.
+
+Among households in the information condition, 65\% accessed the app at least once. Interaction rates were 47\% for the social comparison feature and 40\% for the gamification elements. The information page—accessed upon opening the app—was the most frequently used feature (11{,}070 interactions), followed by gamification (3{,}694 interactions) and social comparison (1{,}905 interactions).
+
+Engagement was highly skewed and persistent only for a subset of users. The top 10\% of households accounted for 76.7\% of all interactions, while the median household interacted with the app only six times. Moreover, 34.5\% of households never used the app after installation, and an additional 43\% engaged only briefly (one to three months). Only 22.7\% of households exhibited sustained engagement over four or more months.
+
+\subsection{Sample and Data}
+The field experiment was conducted in 2017 and 2018 in Upper Austria in cooperation with a local energy utility. Recruitment took place in three phases between May and November 2017, targeting approximately 2,000 households to account for expected attrition.
+
+A total of 30,000 email invitations and 10,000 postal letters were distributed, each including a description of the app and a link to an online registration survey.\footnote{Postal invitations were discontinued after the first recruitment phase due to a low response rate (below 2\%, $n=180$).} Fewer than 3\% of contacted households enrolled, a rate comparable to similar field experiments. As a result, participants are likely to be more environmentally conscious, technologically inclined, and more receptive to feedback than the general population.
+
+During registration, households provided sociodemographic information, dwelling characteristics, and appliance ownership data, and consented to the use of their smart meter data.\footnote{Approved by the Austrian Data Protection Authority (reference number DSB-D036.500/0005-DSB/2017).} Participation was incentivized through a lottery with prizes totaling €3,000.
+
+Of 1,939 initial respondents, 1,524 completed the registration process. After excluding ineligible participants, 1,020 households were randomly assigned to either the control or information condition. Treated households received access to the app in a staggered rollout in June (tranche 1), September (tranche 2), and November 2017 (tranche 3).
+
+\begin{table}[H]
+\centering
+\caption{Recruitment and final estimation sample by tranche}
+\label{tab:Recruitment}
+\begin{tabular}{llcccccc}
+\toprule
+ &  & \multicolumn{3}{c}{Initial sample} & \multicolumn{3}{c}{Final sample} \\
+\cmidrule(lr){3-5} \cmidrule(lr){6-8}
+Tranche & Starting Date & Control & Information & Total & Control & Information & Total \\
+\midrule
+1 & 06/06/17 & 166 & 200 & 366 & 154 & 171 & 325 \\
+2 & 19/09/17 & 224 & 224 & 448 & 185 & 196 & 381 \\
+3 & 20/11/17 & 116 & 90  & 206 & 104 & 82  & 186 \\
+\midrule
+Total &  & 506 & 514 & 1020 & 443 & 449 & 892 \\
+\bottomrule
+\end{tabular}
+
+\caption*{\footnotesize
+Note: The table reports the number of households recruited and included in the final estimation sample by tranche and experimental group. Differences between the initial and final samples arise due to data cleaning steps, including the exclusion of households with photovoltaic systems, insufficient data coverage, anomalous consumption patterns, and outlier removal.}
+\end{table}
+
+
+Several data cleaning steps were applied to construct the estimation sample. First, 109 households with photovoltaic (PV) systems were excluded due to the absence of reliable information on self-consumption and production. Second, we restricted the sample to households with sufficiently complete data, requiring at least 90\% coverage of potential observations. Third, days with an unusually high number of zero-consumption observations were removed to address data quality issues. Fourth, we excluded households with extreme average electricity consumption, defined as exceeding three standard deviations from the mean in the pre-treatment period.
+
+To ensure comparability across treatment cohorts, the final sample is further restricted to a balanced pre-treatment window for each tranche. The resulting dataset consists of 892 households and approximately 8.5 million hourly observations.
+
+To assess whether the cleaning procedure induces differential attrition across treatment groups, we estimate a series of logistic regressions of removal indicators on treatment status. Across all steps, we find no systematic differences in the probability of removal between control and treated households. A detailed breakdown of the sample construction and the corresponding selection diagnostics is provided in Appendix Table~\ref{tab:sample_selection}.
+
+\subsection{Identification and Validity}
+
+To assess the validity of the randomization, we compare household characteristics across treatment and control groups (Table \ref{table:SummaryStatistics}). None of the observed variables differ significantly at the 5\% level, and standardized mean differences are small, indicating good balance.
+
+\begin{table}[H]
+\centering
+\caption{Covariate balance between control and information groups}
+\label{tab:SummaryStatistics}
+\begin{tabular}{lccc}
+\toprule
+Variable & Control & Information & p-value \\
+\midrule
+
+\textbf{N (Households)} & 443 & 449 &  \\
+
+\midrule
+\textbf{Heating variables} \\
+Gas & 0.23 (0.42) & 0.23 (0.42) & 0.899 \\
+District heating & 0.14 (0.35) & 0.16 (0.37) & 0.346 \\
+Biomass & 0.11 (0.31) & 0.12 (0.33) & 0.577 \\
+Oil & 0.17 (0.38) & 0.15 (0.35) & 0.362 \\
+Electric heating & 0.06 (0.23) & 0.05 (0.21) & 0.515 \\
+Heat pump & 0.33 (0.47) & 0.30 (0.46) & 0.433 \\
+
+\midrule
+\textbf{Housing variables} \\
+Home ownership & 0.75 (0.43) & 0.73 (0.44) & 0.424 \\
+Apartment & 0.31 (0.46) & 0.28 (0.45) & 0.388 \\
+Single-family house & 0.05 (0.23) & 0.07 (0.25) & 0.357 \\
+Split house & 0.62 (0.49) & 0.63 (0.48) & 0.666 \\
+
+\midrule
+\textbf{Appliance variables} \\
+Swimming pool & 0.24 (0.43) & 0.21 (0.41) & 0.287 \\
+Sauna & 0.19 (0.39) & 0.17 (0.38) & 0.430 \\
+Air conditioning & 0.04 (0.19) & 0.03 (0.17) & 0.547 \\
+Aquarium & 0.06 (0.24) & 0.05 (0.21) & 0.426 \\
+Dryer & 0.57 (0.50) & 0.58 (0.49) & 0.757 \\
+Water bed & 0.05 (0.22) & 0.04 (0.20) & 0.490 \\
+Deep freezers & 0.82 (0.69) & 0.83 (0.71) & 0.884 \\
+Computers & 2.50 (1.40) & 2.57 (1.40) & 0.492 \\
+Electric vehicle & 0.02 (0.14) & 0.02 (0.15) & 0.836 \\
+E-bike & 0.07 (0.33) & 0.04 (0.23) & 0.118 \\
+
+\midrule
+\textbf{Other variables} \\
+Number of residents & 2.67 (1.20) & 2.69 (1.20) & 0.761 \\
+Dwelling size (m$^2$) & 134.42 (65.36) & 128.92 (54.14) & 0.171 \\
+
+\bottomrule
+\end{tabular}
+
+\caption*{\footnotesize
+Note: This table reports mean values and standard deviations by experimental group. Binary variables are reported as shares. p-values are based on two-sided t-tests of equality in means between the control and information groups.}
+\end{table}
+
+The key identifying assumption of the DiD approach is that, in the absence of treatment, both groups would have followed parallel trends. We assess this assumption using both graphical and statistical evidence.
+
+Figure \ref{fig:pre_treatment_load_curve} shows average hourly electricity consumption during the pre-treatment period for both groups. The close alignment of consumption patterns supports the parallel trends assumption. Additional tranche-specific analyses (Figures \ref{fig:tranche1_comparison}--\ref{fig:tranche3_comparison}) confirm this finding.
+
+Mean consumption levels are nearly identical across groups in the pre-treatment period (0.412 kWh for the control group and 0.414 kWh for the information condition), further supporting the validity of the empirical design.
+
+To complement behavioral data, a post-trial survey among participants in the information condition (N = 111) provides additional insights. The results indicate that the information page was perceived as the most useful feature, followed by social comparison and gamification elements. More than 70\% of respondents reported changes in their electricity consumption behavior.
