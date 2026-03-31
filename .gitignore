@@ -1,17 +1,30 @@
-# R
+# --- R Project Basics ---
 .Rhistory
 .RData
 .Rproj.user/
+.Ruserdata
+.Rapp.history
 
-# Data (never commit real data)
-data/interim/*
-data/final/*
-!data/**/.keep
+# --- Data (STRICT) ---
+# Ignore all data directories entirely
+data/raw/
+data/processed/
+data/interim/
+data/simulated/
+data/final/
 
-# Output
-output/*
-!output/**/.keep
+# Specific data file types (extra safety)
+*.csv.gz
+*.rds
+*.RData
+*.sqlite
 
-# OS / editor
+# --- Output & Figures ---
+# If you only want to keep the final figures, ignore the rest
+# paper/figures/ (uncomment if you don't want to track figures)
+
+# --- OS / Editor ---
 .DS_Store
 Thumbs.db
+.vscode/
+.idea/
