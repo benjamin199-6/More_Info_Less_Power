@@ -1,372 +1,615 @@
-# --- Step 1: Prep Treatment & Time IDs ---
+###############################################################################
+# 06_staggered_did_hourly.R
+#
+# Purpose:
+# - Estimate staggered DiD using hourly data
+# - Main estimator: Sun & Abraham (kWh)
+# - Robustness: TWFE (kWh)
+###############################################################################
+
+# ---------------------------------------------------------------------------
+# 0. Setup
+# ---------------------------------------------------------------------------
 source(here::here("R", "00_setup.R"))
-library(zoo); library(fixest); library(data.table); library(lubridate)
 gc()
 
-dt_hourly <- readRDS(file.path(paths$data_processed, "dt_final.rds"))
-setDT(dt_hourly)
-
-# 1.1 Define Rolling Tranche Dates
-tranche_dates <- list(
-  t1 = as.Date("2017-06-06"), 
-  t2 = as.Date("2017-09-19"), 
-  t3 = as.Date("2017-11-20")
-)
-
-# 1.2 Assign Treatment Date based on Tranches
-dt_hourly[, treat_date := fcase(
-  Tranche1 == 1, tranche_dates$t1, 
-  Tranche2 == 1, tranche_dates$t2,
-  Tranche3 == 1, tranche_dates$t3, 
-  default = as.Date(NA)
-)]
-
-# 1.3 Create the Global Time IDs (Month and Week)
-min_date_val <- min(dt_hourly$date)
-dt_hourly[, time_id := as.integer(round((as.yearmon(date) - as.yearmon(min_date_val)) * 12)) + 1]
-dt_hourly[, week_id := as.integer(difftime(date, min_date_val, units = "weeks")) + 1]
-
-# 1.4 Create Cohort IDs (Month and Week) for Sun-Abraham
-# Control group (appgrp == 0) must be 0
-dt_hourly[, cohort_id := 0]
-dt_hourly[appgrp == 1, cohort_id := as.integer(round((as.yearmon(treat_date) - as.yearmon(min_date_val)) * 12)) + 1]
-
-dt_hourly[, cohort_id_week := 0]
-dt_hourly[appgrp == 1, cohort_id_week := as.integer(difftime(treat_date, min_date_val, units = "weeks")) + 1]
-
-# VERIFY: Do you see 0, 2, 5, 7?
-print("Monthly Cohorts (0=Control):")
-print(table(dt_hourly$cohort_id))
-
-
-
-# --- Step 2: Aggregate to Weekly & Monthly ---
-
-# 2.1 Weekly Aggregation
-dt_weekly <- dt_hourly[, .(
-  consumption = mean(consumption, na.rm = TRUE), # Mean fixes variable week length spikes
-  appgrp = max(appgrp), 
-  post = max(post),
-  cohort_id_week = max(cohort_id_week)
-), by = .(household, week_id)]
-
-# 2.2 Monthly Aggregation
-dt_monthly <- dt_hourly[, .(
-  consumption = mean(consumption, na.rm = TRUE),
-  appgrp = max(appgrp), 
-  post = max(post),
-  cohort_id = max(cohort_id)
-), by = .(household, time_id)]
-
-# 2.3 Create Subset for 9-Month Analysis (without overwriting original)
-dt_hourly_9mo  <- dt_hourly[time_id <= 9]
-dt_weekly_9mo  <- dt_weekly[week_id <= 39]
-dt_monthly_9mo <- dt_monthly[time_id <= 9]
-
-message("Datasets prepared: dt_hourly, dt_weekly, dt_monthly, and 9-month subsets.")
-
-
-
-# --- Step 3: Hourly Analysis (Full Period) ---
-
-# Log Model (Percent change)
-m_hourly_log <- feols(log1p(consumption) ~ sunab(cohort_id, time_id, ref.c = 0) | date + hour + household, dt_hourly, cluster = ~household)
-
-# Level Model (kWh change)
-m_hourly_kwh <- feols(consumption ~ sunab(cohort_id, time_id, ref.c = 0) | date + hour + household, dt_hourly, cluster = ~household)
-
-# Compare
-iplot(m_hourly_log, main = "Hourly Log Effects")
-iplot(m_hourly_kwh, main = "Hourly kWh Effects")
-
-
-# --- Step 4: Weekly Sun-Abraham Models ---
-
-# 4.1 Weekly Log Model (Percentage Impact)
-m_weekly_log <- feols(consumption ~ sunab(cohort_id_week, week_id, ref.c = 0) | week_id + household, 
-                      data = dt_weekly, cluster = ~household)
-
-# 4.2 Weekly Level Model (kWh Impact)
-m_weekly_kwh <- feols(consumption ~ sunab(cohort_id_week, week_id, ref.c = 0) | week_id + household, 
-                      data = dt_weekly, cluster = ~household)
-
-# 4.3 Summary of Average Treatment Effect (ATT)
-message("Weekly ATT (Log):")
-print(summary(m_weekly_log, agg = "ATT"))
-
-# 4.4 Plot Results (Should be smooth now with mean aggregation)
-par(mfrow = c(1, 2))
-iplot(m_weekly_log, main = "Weekly Effects (log)")
-iplot(m_weekly_kwh, main = "Weekly Effects (kWh)")
-par(mfrow = c(1, 1))
-
-
-# --- Step 5: 9-Month Subset (Monthly & Weekly) ---
-
-# 5.1 Monthly Log Model (9-Month Subset)
-m_monthly_9mo_log <- feols(log1p(consumption) ~ sunab(cohort_id, time_id, ref.c = 0) | time_id + household, 
-                           data = dt_monthly_9mo, cluster = ~household)
-
-# 5.2 Weekly Log Model (9-Month Subset)
-m_weekly_9mo_log <- feols(log1p(consumption) ~ sunab(cohort_id_week, week_id, ref.c = 0) | week_id + household, 
-                          data = dt_weekly_9mo, cluster = ~household)
-
-# Plot comparison
-par(mfrow = c(1, 2))
-iplot(m_monthly_9mo_log, main = "Monthly 9-Mo (log)")
-iplot(m_weekly_9mo_log, main = "Weekly 9-Mo (log)")
-par(mfrow = c(1, 1))
-
-
-
-# --- Step 6: Bias Check (TWFE vs Sun-Abraham) ---
-
-# 6.1 Standard TWFE Interaction (Biased)
-# We use i() for the standard dynamic plot
-m_weekly_twfe <- feols(consumption ~ i(week_id, appgrp, ref=1) | week_id + household, 
-                       data = dt_weekly, cluster = ~household)
-
-# 6.2 Side-by-Side Plotting
-# This visually demonstrates the correction
-par(mfrow = c(1, 2))
-iplot(m_weekly_twfe, main = "Standard TWFE (Biased)")
-iplot(m_weekly_log, main = "Sun-Abraham (Unbiased)")
-par(mfrow = c(1, 1))
-
-# 6.3 Compare ATT estimates
-etable(m_weekly_twfe, m_weekly_log, 
-       headers = c("TWFE", "Sun-Abraham"),
-       title = "Comparison of Staggered DiD Estimators")
-
-
-# --- Step 6.4: Combined Visualization (TWFE vs. Sun-Abraham) ---
-
-# We pass both models to iplot to see them on the same axis
-# 'pt.pch' sets different point shapes, 'col' sets colors
-iplot(list(m_weekly_twfe, m_weekly_log),
-      main = "Comparison: Biased TWFE vs. Unbiased Sun-Abraham",
-      xlab = "Weeks Relative to Treatment",
-      ylab = "Estimate (log points)",
-      sep = 0.2,            # Adds a small horizontal offset so points don't overlap
-      pt.join = TRUE,       # Connects the dots for each model
-      col = c("gray70", "royalblue"), # Gray for biased, Blue for unbiased
-      pch = c(16, 17),      # Circle for TWFE, Triangle for Sun-Abraham
-      ref.line = TRUE)      # Adds the horizontal line at 0
-
-# Add a legend to make it clear which is which
-legend("bottom", 
-       legend = c("Standard TWFE (Biased)", "Sun-Abraham (Unbiased)"), 
-       col = c("gray70", "royalblue"), 
-       pch = c(16, 17), 
-       bty = "n") # 'n' removes the box around the legend
-
-
-
-
-# --- Step 2.5: Daily Aggregation (Dual Outcomes) ---
-
-dt_daily <- dt_hourly[, .(
-  # 1. Raw Sum: Total kWh recorded in that day
-  consumption_sum = sum(consumption, na.rm = TRUE),
-  
-  # 2. Standardized Day: Mean hourly load * 24
-  consumption_std = mean(consumption, na.rm = TRUE) * 24,
-  
-  # Quality metrics
-  n_hours = .N,
-  
-  appgrp = max(appgrp), 
-  post = max(post),
-  treat_date = max(treat_date)
-), by = .(household, date)]
-
-# Create IDs
-min_date_val <- min(dt_daily$date)
-dt_daily[, day_id := as.integer(difftime(date, min_date_val, units = "days")) + 1]
-dt_daily[, cohort_id_day := 0]
-dt_daily[appgrp == 1, cohort_id_day := as.integer(difftime(treat_date, min_date_val, units = "days")) + 1]
-
-# Log-transform both for comparison
-dt_daily[, `:=`(
-  log_sum = log1p(consumption_sum),
-  log_std = log1p(consumption_std)
-)]
-
-# Keep only days with at least 18 hours for the 'Sum' to be meaningful
-dt_daily <- dt_daily[n_hours >= 18]
-
-message("Daily Dual-Outcome Data Ready.")
-
-
-# --- Step 4.E: Sun-Abraham Comparison (Sum vs Standardized) ---
-
-# 1. Model using Raw Sum
-m_daily_sunab_sum <- feols(log_sum ~ sunab(cohort_id_day, day_id, ref.c = 0, 
-                                           bin = list("Post" = 30:500)) | day_id + household, 
-                           data = dt_daily, cluster = ~household)
-
-# 2. Model using Standardized (Mean * 24)
-m_daily_sunab_std <- feols(log_std ~ sunab(cohort_id_day, day_id, ref.c = 0, 
-                                           bin = list("Post" = 30:500)) | day_id + household, 
-                           data = dt_daily, cluster = ~household)
-
-# 3. Combined Visualization
-# Gray = Raw Sum, Firebrick = Standardized
-iplot(list(m_daily_sunab_sum, m_daily_sunab_std),
-      main = "Daily Aggregation Check: Sum vs. Standardized",
-      xlab = "Days Relative to App Receipt",
-      ylab = "Estimate (log points)",
-      col = c("gray70", "firebrick"), 
-      pt.join = TRUE,
-      pt.pch = c(16, 17),
-      ref.line = TRUE,
-      sep = 0.1)
-
-legend("topright", 
-       legend = c("Raw Sum (Sensitive to missing hours)", "Standardized (Mean * 24)"), 
-       col = c("gray70", "firebrick"), 
-       pch = c(16, 17), 
-       bty = "n")
-
-# Compare ATT estimates
-etable(m_daily_sunab_sum, m_daily_sunab_std, 
-       headers = c("Raw Sum", "Standardized (Mean*24)"),
-       title = "Comparison of Aggregation Methods")
-
-
-# --- Step 2.6: Daily Aggregation with all IDs and Seasonality ---
-library(lubridate) # Ensure lubridate is active
-
-dt_daily <- dt_hourly[, .(
-  # Standardized Daily Total (Mean * 24)
-  consumption_std = mean(consumption, na.rm = TRUE) * 24,
-  
-  # Metadata and Grouping IDs
-  appgrp = max(appgrp), 
-  post = max(post),
-  treat_date = max(treat_date),
-  
-  # Ensure Sun-Abraham Cohort IDs are carried over
-  cohort_id = max(cohort_id),           
-  cohort_id_week = max(cohort_id_week)
-), by = .(household, date)]
-
-# 1. Create the Day-of-Week (Explicitly use lubridate::wday)
-dt_daily[, dow := lubridate::wday(date, label = TRUE)]
-
-# 2. Create the Time IDs and Outcomes
-min_date_val <- min(dt_daily$date)
-dt_daily[, `:=`(
-  day_id = as.integer(difftime(date, min_date_val, units = "days")) + 1,
-  week_id = as.integer(difftime(date, min_date_val, units = "weeks")) + 1,
-  time_id = as.integer(round((as.yearmon(date) - as.yearmon(min_date_val)) * 12)) + 1,
-  log_std = log1p(consumption_std)
-)]
-
-# 3. Create Relative Week for the TWFE comparison
-dt_daily[, rel_week := as.integer(floor(as.numeric(difftime(date, treat_date, units = "days")) / 7))]
-
-message("Daily data fixed. 'dow' and 'cohort_id_week' are now available.")
-## --- Step 4.F: Daily Observations, Weekly Treatment Effects ---
-
-# Sun-Abraham (Unbiased)
-m_daily_weekly_sunab <- feols(
-  log_std ~ sunab(cohort_id_week, week_id, ref.c = 0, bin = list("Post" = 20:60)) | 
-    week_id + household + dow, 
-  data = dt_daily, 
-  cluster = ~household
-)
-
-# Standard TWFE (Biased Comparison)
-m_daily_weekly_twfe <- feols(
-  log_std ~ i(rel_week, appgrp, ref = -1) | week_id + household + dow, 
-  data = dt_daily[rel_week >= -10 & rel_week <= 30], 
-  cluster = ~household
-)
-
-# Combined Plot: Weekly dynamics using daily resolution
-iplot(list(m_daily_weekly_twfe, m_daily_weekly_sunab),
-      main = "Daily Data: Weekly Effects (with Day-of-Week FE)",
-      xlab = "Weeks Since Treatment",
-      col = c("gray70", "royalblue"),
-      pt.join = TRUE,
-      ref.line = TRUE,
-      sep = 0.1)
-
-legend("topright", legend = c("TWFE (Daily Obs)", "Sun-Abraham (Daily Obs)"), 
-       col = c("gray70", "royalblue"), pch = c(16, 17), bty = "n")
-
-# Single Headline Estimate
-summary(m_daily_weekly_sunab, agg = "ATT")
-
-
-# next
-
-
-# --- Step 1.4 (Revised): Create all Cohort IDs in Hourly Data ---
-
-# Reference point for all time-series (Day 1 of study)
-min_date_study <- min(dt_hourly$date)
-
-# Create Daily Cohort: The day number (1, 2, 3...) when treatment started
-dt_hourly[, cohort_id_day := 0]
-dt_hourly[appgrp == 1, cohort_id_day := as.integer(difftime(treat_date, min_date_study, units = "days")) + 1]
-
-# Create Weekly Cohort: The week number when treatment started
-dt_hourly[, cohort_id_week := 0]
-dt_hourly[appgrp == 1, cohort_id_week := as.integer(difftime(treat_date, min_date_study, units = "weeks")) + 1]
-
-# Create Monthly Cohort: The month number when treatment started
-dt_hourly[, cohort_id := 0]
-dt_hourly[appgrp == 1, cohort_id := as.integer(round((as.yearmon(treat_date) - as.yearmon(min_date_study)) * 12)) + 1]
-
-message("Cohort IDs (Day, Week, Month) defined in dt_hourly.")
-
-# --- Step 2.6 (Revised): Aggregate to Daily ---
+library(dplyr)
+library(fixest)
 library(lubridate)
 
-dt_daily <- dt_hourly[, .(
-  consumption_std = mean(consumption, na.rm = TRUE) * 24, # Standardized Day
-  appgrp = max(appgrp), 
-  post = max(post),
-  treat_date = max(treat_date),
-  
-  # Pull the IDs we just created
-  cohort_id_day = max(cohort_id_day),
-  cohort_id_week = max(cohort_id_week),
-  cohort_id = max(cohort_id)
-), by = .(household, date)]
+message("Running 06_staggered_did_hourly.R ...")
 
-# Create the Daily Time IDs
-dt_daily[, `:=`(
-  day_id = as.integer(difftime(date, min_date_study, units = "days")) + 1,
-  dow = lubridate::wday(date, label = TRUE),
-  log_std = log1p(consumption_std)
-)]
+# ---------------------------------------------------------------------------
+# 1. Load data
+# ---------------------------------------------------------------------------
+dt_hourly <- readRDS(file.path(paths$data_processed, "dt_final.rds"))
 
-message("dt_daily is now fully populated with cohort_id_day.")
+# ---------------------------------------------------------------------------
+# 2. Define treatment dates (by tranche)
+# ---------------------------------------------------------------------------
+dt_hourly <- dt_hourly %>%
+  mutate(
+    treat_date = case_when(
+      Tranche1 == 1 ~ as.Date("2017-06-06"),
+      Tranche2 == 1 ~ as.Date("2017-09-19"),
+      Tranche3 == 1 ~ as.Date("2017-11-20"),
+      TRUE ~ as.Date(NA)
+    ),
+    treat_date = if_else(group == "Control", as.Date(NA), treat_date)
+  )
 
-# --- Step 4.G: Robust Daily Sun-Abraham ---
+table(dt_hourly$treat_date,dt_hourly$group)
 
-# 1. Run the model without manual binning to avoid "value not found" errors
-# This estimates every single relative day. 
-aily_sunab <- feols(
-  log_std ~ sunab(cohort_id_day, day_id, ref.c = 0) | 
-    day_id + household + dow, 
-  data = dt_daily, 
+# ---------------------------------------------------------------------------
+# 3. Define treatment indicator (TWFE)
+# ---------------------------------------------------------------------------
+dt_hourly <- dt_hourly %>%
+  mutate(
+    treated = if_else(group == "App" & date >= treat_date, 1, 0)
+  )
+
+
+table(dt_hourly$treated[dt_hourly$group == "Control"])
+table(dt_hourly$treated[dt_hourly$group == "App"])
+# ---------------------------------------------------------------------------
+# 4. Define time variables (for Sun-Abraham)
+# ---------------------------------------------------------------------------
+min_date <- min(dt_hourly$date, na.rm = TRUE)
+
+dt_hourly <- dt_hourly %>%
+  mutate(
+    day_id = as.integer(date - min_date) + 1,
+    cohort_id_day = case_when(
+      group == "App" ~ as.integer(treat_date - min_date) + 1,
+      TRUE ~ 0
+    )
+  )
+
+
+dt_daily <- dt_hourly %>%
+  group_by(household, date) %>%
+  summarise(
+    consumption = sum(consumption, na.rm = TRUE),
+    group = first(group),
+    treat_date = first(treat_date),
+    .groups = "drop"
+  )
+
+min_date <- min(dt_daily$date)
+
+dt_daily <- dt_daily %>%
+  mutate(
+    treated = if_else(group == "App" & date >= treat_date, 1, 0),
+    day_id = as.integer(date - min_date) + 1,
+    cohort_id_day = case_when(
+      group == "App" ~ as.integer(treat_date - min_date) + 1,
+      TRUE ~ 0
+    )
+  )
+
+m_sunab <- feols(
+  consumption ~ sunab(cohort_id_day, day_id, ref.c = 0) |
+    household + day_id,
+  data = dt_daily,
   cluster = ~household
 )
 
-# 2. Focus the plot on the relevant window (+/- 60 days)
-# 'iplot' handles the windowing for us visually
-iplot(m_daily_sunab, 
-      xlim = c(-60, 60), 
-      main = "Daily Treatment Effects (Focus: +/- 60 Days)",
-      xlab = "Days Relative to Treatment",
-      ylab = "Estimate (log points)",
-      pt.join = TRUE, 
-      ref.line = TRUE)
+att_sunab <- summary(m_sunab, agg = "ATT")
+print(att_sunab)
 
-# 3. View the headline result
-message("ATT Estimate (Daily):")
-summary(m_daily_sunab, agg = "ATT")
+
+# ---------------------------------------------------------------------------
+# TWFE (daily data)
+# ---------------------------------------------------------------------------
+
+m_twfe_daily <- feols(
+  consumption ~ treated |
+    household + date,
+  data = dt_daily,
+  cluster = ~household
+)
+
+summary(m_twfe_daily)
+
+# ---------------------------------------------------------------------------
+# 6. TWFE with hourly data as robustness
+# ---------------------------------------------------------------------------
+
+m_twfe <- feols(
+  consumption ~ treated |
+    household + day_id,
+  data = dt_hourly,
+  cluster = ~household
+)
+
+summary(m_twfe)
+
+
+### weekly fixed effect 
+
+
+dt_daily <- dt_daily %>%
+  mutate(
+    week_id = floor(day_id / 7),
+    cohort_week = floor(cohort_id_day / 7)
+  )
+
+
+m_sunab_week <- feols(
+  consumption ~ sunab(cohort_week, week_id, ref.c = 0) |
+    household + week_id,
+  data = dt_daily,
+  cluster = ~household
+)
+
+att_sunab_week <- summary(m_sunab_week, agg = "ATT")
+print(att_sunab_week)
+
+
+# ===========================================================================
+# EXTENSIONS: FLEXIBLE VS NON-FLEXIBLE HOURS
+# ===========================================================================
+
+# Flexible hours: 07:00-22
+dt_hourly <- dt_hourly %>%
+  mutate(
+    flexible_hour = if_else(hour %in% 7:22, 1L, 0L)
+  )
+
+print(table(dt_hourly$flexible_hour))
+
+print(
+  dt_hourly %>%
+    group_by(hour) %>%
+    summarise(mean_kwh = mean(consumption, na.rm = TRUE), .groups = "drop")
+)
+
+# ---------------------------------------------------------------------------
+# Aggregate daily totals separately for flexible and non-flexible hours
+# ---------------------------------------------------------------------------
+dt_daily_flex <- dt_hourly %>%
+  filter(flexible_hour == 1) %>%
+  group_by(household, date) %>%
+  summarise(
+    consumption = sum(consumption, na.rm = TRUE),
+    group = first(group),
+    treat_date = first(treat_date),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    treated = if_else(group == "App" & date >= treat_date, 1, 0),
+    day_id = as.integer(date - min_date) + 1,
+    cohort_id_day = case_when(
+      group == "App" ~ as.integer(treat_date - min_date) + 1,
+      TRUE ~ 0
+    ),
+    week_id = floor(day_id / 7),
+    cohort_week = floor(cohort_id_day / 7)
+  )
+
+dt_daily_inflex <- dt_hourly %>%
+  filter(flexible_hour == 0) %>%
+  group_by(household, date) %>%
+  summarise(
+    consumption = sum(consumption, na.rm = TRUE),
+    group = first(group),
+    treat_date = first(treat_date),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    treated = if_else(group == "App" & date >= treat_date, 1, 0),
+    day_id = as.integer(date - min_date) + 1,
+    cohort_id_day = case_when(
+      group == "App" ~ as.integer(treat_date - min_date) + 1,
+      TRUE ~ 0
+    ),
+    week_id = floor(day_id / 7),
+    cohort_week = floor(cohort_id_day / 7)
+  )
+
+print(c(
+  daily_all = nrow(dt_daily),
+  daily_flex = nrow(dt_daily_flex),
+  daily_inflex = nrow(dt_daily_inflex)
+))
+
+print(c(
+  hh_all = n_distinct(dt_daily$household),
+  hh_flex = n_distinct(dt_daily_flex$household),
+  hh_inflex = n_distinct(dt_daily_inflex$household)
+))
+
+# ---------------------------------------------------------------------------
+# Weekly Sun-Abraham + TWFE: flexible hours
+# ---------------------------------------------------------------------------
+m_sunab_week_flex <- feols(
+  consumption ~ sunab(cohort_week, week_id, ref.c = 0) |
+    household + week_id,
+  data = dt_daily_flex,
+  cluster = ~household
+)
+
+
+att_sunab_week_flex <- summary(m_sunab_week_flex, agg = "ATT")
+print(att_sunab_week_flex)
+
+m_twfe_week_flex <- feols(
+  consumption ~ treated |
+    household + week_id,
+  data = dt_daily_flex,
+  cluster = ~household
+)
+
+sum_twfe_week_flex <- summary(m_twfe_week_flex)
+print(sum_twfe_week_flex)
+
+# ---------------------------------------------------------------------------
+# Weekly Sun-Abraham + TWFE: non-flexible hours
+# ---------------------------------------------------------------------------
+m_sunab_week_inflex <- feols(
+  consumption ~ sunab(cohort_week, week_id, ref.c = 0) |
+    household + week_id,
+  data = dt_daily_inflex,
+  cluster = ~household
+)
+
+att_sunab_week_inflex <- summary(m_sunab_week_inflex, agg = "ATT")
+print(att_sunab_week_inflex)
+
+m_twfe_week_inflex <- feols(
+  consumption ~ treated |
+    household + week_id,
+  data = dt_daily_inflex,
+  cluster = ~household
+)
+
+sum_twfe_week_inflex <- summary(m_twfe_week_inflex)
+print(sum_twfe_week_inflex)
+
+
+# ---------------------------------------------------------------------------
+# Weekly TWFE 
+# ---------------------------------------------------------------------------
+dt_daily <- dt_daily %>%
+  mutate(
+    week_id = floor(day_id / 7),
+    cohort_week = floor(cohort_id_day / 7)
+  )
+
+
+
+m_twfe_week <- feols(
+  consumption ~ treated |
+    household + week_id,
+  data = dt_daily,
+  cluster = ~household
+)
+
+sum_twfe_week <- summary(m_twfe_week)
+print(sum_twfe_week)
+
+# ---------------------------------------------------------------------------
+# COMBINED TABLE: TWFE + SUN-ABRAHAM ATT
+# ---------------------------------------------------------------------------
+
+# TWFE models together
+etable(
+  m_twfe_daily,
+  m_twfe,              # hourly
+  m_twfe_week,
+  m_twfe_week_flex,
+  m_twfe_week_inflex
+)
+
+# Sun-Abraham ATT outputs (printed separately)
+print(att_sunab)
+print(att_sunab_week)
+print(att_sunab_week_flex)
+print(att_sunab_week_inflex)
+
+mean_weekly_pre <- mean(dt_daily$consumption[dt_daily$treated == 0])
+att_week <- -0.4736 ## att from att_sunab_week
+pct_effect <- 100 * att_week / mean_weekly_pre
+
+m_sunab_week_log <- feols(
+  log(consumption) ~ sunab(cohort_week, week_id, ref.c = 0) |
+    household + week_id,
+  data = dt_daily,
+  cluster = ~household
+)
+
+att_sunab_week_log <- summary(m_sunab_week_log, agg = "ATT")
+print(att_sunab_week)
+pct_effect
+
+### Event Study 
+m_sunab_dynamic <- feols(
+  consumption ~ sunab(cohort_week, week_id, ref.c = 0) |
+    household + day_id,
+  data = dt_daily,
+  cluster = ~household
+)
+
+m_sunab_dynamic_log <- feols(
+  log1p(consumption) ~ sunab(cohort_week, week_id, ref.c = 0) |
+    household + day_id,
+  data = dt_daily,
+  cluster = ~household
+)
+
+iplot(
+  m_sunab_dynamic,
+  main = "Effect of App Access on Electricity Consumption",
+  xlab = "Weeks relative to app access",
+  ylab = "Change in daily electricity consumption (kWh)",
+  pt.join = TRUE,
+  col = "black",
+  ci.col = "grey70",
+  ci.alpha = 0.5,
+  ref.line = -1,
+  grid = FALSE,
+  xlim = c(-10, 30)   # <- restrict view instead of binning
+)
+
+abline(h = 0, lty = 2, col = "grey40")
+
+
+library(broom)
+library(dplyr)
+library(stringr)
+library(ggplot2)
+
+df_kwh <- broom::tidy(m_sunab_dynamic) %>%
+  filter(str_detect(term, "week_id::")) %>%
+  mutate(
+    week = as.numeric(str_extract(term, "-?\\d+")),
+    conf.low = estimate - 1.96 * std.error,
+    conf.high = estimate + 1.96 * std.error
+  ) %>%
+  filter(week >= -10 & week <= 30)
+
+
+gg_kwh <- ggplot(df_kwh, aes(x = week, y = estimate)) +
+  geom_ribbon(aes(ymin = conf.low, ymax = conf.high),
+              fill = "grey85", alpha = 0.8) +
+  geom_line(color = "black", size = 1) +
+  geom_point(color = "black", size = 2) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "grey40") +
+  geom_vline(xintercept = -0.5, linetype = "dotted", color = "grey40") +
+  labs(
+    title = "",
+    x = "Weeks relative to app access",
+    y = "Change in daily electricity consumption (kWh)"
+  ) +
+  theme_minimal(base_size = 10) +
+  theme(
+    panel.grid.minor = element_blank(),
+    panel.grid.major.x = element_blank(),
+    plot.title = element_text(face = "bold")
+  )
+
+gg_kwh
+  
+
+dt_weekly <- dt_daily %>%
+  mutate(
+    week_id = floor(day_id / 7),
+    cohort_week = floor(cohort_id_day / 7)
+  ) %>%
+  group_by(household, week_id) %>%
+  summarise(
+    consumption = sum(consumption, na.rm = TRUE),
+    cohort_week = first(cohort_week),
+    .groups = "drop"
+  )
+
+
+m_sunab_weekly <- feols(
+  consumption ~ sunab(cohort_week, week_id, ref.c = 0) |
+    household + week_id,
+  data = dt_weekly,
+  cluster = ~household
+)
+
+
+# Appendix 
+
+df_weekly <- broom::tidy(m_sunab_weekly) %>%
+  filter(str_detect(term, "week_id::")) %>%
+  mutate(
+    week = as.numeric(str_extract(term, "-?\\d+")),
+    conf.low = estimate - 1.96 * std.error,
+    conf.high = estimate + 1.96 * std.error
+  ) %>%
+  filter(week >= -10 & week <= 50)
+
+
+gg_weekly <- ggplot(df_weekly, aes(x = week, y = estimate)) +
+  geom_ribbon(aes(ymin = conf.low, ymax = conf.high),
+              fill = "grey85", alpha = 0.8) +
+  geom_line(color = "black", size = 1) +
+  geom_point(color = "black", size = 2) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "grey40") +
+  geom_vline(xintercept = -0.5, linetype = "dotted", color = "grey40") +
+  labs(
+    title = "Dynamic Effect of App Access on Weekly Electricity Consumption",
+    x = "Weeks relative to app access",
+    y = "Change in weekly electricity consumption (kWh)"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    panel.grid.minor = element_blank(),
+    panel.grid.major.x = element_blank(),
+    plot.title = element_text(face = "bold")
+  )
+
+gg_weekly
+
+
+
+dt_daily_flex <- dt_hourly %>%
+  filter(hour %in% 7:22) %>%
+  group_by(household, date) %>%
+  summarise(
+    consumption = sum(consumption, na.rm = TRUE),
+    cohort_week = first(cohort_id_day %/% 7),
+    day_id = first(day_id),
+    week_id = first(day_id %/% 7),
+    .groups = "drop"
+  )
+
+dt_daily_inflex <- dt_hourly %>%
+  filter(!(hour %in% 7:22)) %>%
+  group_by(household, date) %>%
+  summarise(
+    consumption = sum(consumption, na.rm = TRUE),
+    cohort_week = first(cohort_id_day %/% 7),
+    day_id = first(day_id),
+    week_id = first(day_id %/% 7),
+    .groups = "drop"
+  )
+
+
+
+m_total <- feols(
+  consumption ~ sunab(cohort_week, week_id, ref.c = 0) |
+    household + day_id,
+  data = dt_daily,
+  cluster = ~household
+)
+
+m_flex <- feols(
+  consumption ~ sunab(cohort_week, week_id, ref.c = 0) |
+    household + day_id,
+  data = dt_daily_flex,
+  cluster = ~household
+)
+
+m_inflex <- feols(
+  consumption ~ sunab(cohort_week, week_id, ref.c = 0) |
+    household + day_id,
+  data = dt_daily_inflex,
+  cluster = ~household
+)
+
+
+
+
+extract_sunab <- function(model, label){
+  broom::tidy(model) %>%
+    filter(str_detect(term, "week_id::")) %>%
+    mutate(
+      week = as.numeric(str_extract(term, "-?\\d+")),
+      conf.low = estimate - 1.96 * std.error,
+      conf.high = estimate + 1.96 * std.error,
+      type = label
+    )
+}
+
+df_all <- bind_rows(
+  extract_sunab(m_total, "Total"),
+  extract_sunab(m_flex, "Flexible"),
+  extract_sunab(m_inflex, "Non-flexible")
+) %>%
+  filter(week >= -10 & week <= 40)
+
+
+gg_combined <- ggplot(df_all, aes(x = week, y = estimate, color = type)) +
+  
+  # CI ribbons (only for total to avoid clutter)
+  geom_ribbon(
+    data = df_all %>% filter(type == "Total"),
+    aes(x = week, ymin = conf.low, ymax = conf.high),
+    fill = "grey80", alpha = 0.6
+  ) +
+  
+  geom_line(size = 1) +
+  geom_point(size = 2) +
+  
+  geom_hline(yintercept = 0, linetype = "dashed", color = "grey40") +
+  geom_vline(xintercept = -0.5, linetype = "dotted", color = "grey40") +
+  
+  scale_color_manual(values = c(
+    "Total" = "black",
+    "Flexible" = "#1b9e77",
+    "Non-flexible" = "#d95f02"
+  )) +
+  
+  labs(
+    title = "Dynamic Effects by Consumption Type",
+    x = "Weeks relative to app access",
+    y = "Change in daily electricity consumption (kWh)",
+    color = ""
+  ) +
+  
+  theme_minimal(base_size = 14) +
+  theme(
+    panel.grid.minor = element_blank(),
+    panel.grid.major.x = element_blank(),
+    plot.title = element_text(face = "bold"),
+    legend.position = "top"
+  )
+
+gg_combined
+
+
+gg_combined2 <- ggplot(df_all, aes(x = week, y = estimate, color = type)) +
+  
+  # CI only for total (lighter)
+  geom_errorbar(
+    data = df_all %>% filter(type == "Total"),
+    aes(ymin = conf.low, ymax = conf.high),
+    width = 0.15,
+    color = "black",
+    alpha = 0.4
+  ) +
+  
+  # lines
+  geom_line(aes(size = type)) +
+  
+  # points
+  geom_point(size = 2) +
+  
+  # reference lines
+  geom_hline(yintercept = 0, linetype = "dashed", color = "grey30") +
+  geom_vline(xintercept = -0.5, linetype = "dotted", color = "grey60") +
+  
+  # colors (softer, publication style)
+  scale_color_manual(values = c(
+    "Total" = "black",
+    "Flexible" = "#2a9d8f",
+    "Non-flexible" = "#e76f51"
+  )) +
+  
+  # emphasize total slightly
+  scale_size_manual(values = c(
+    "Total" = 1.2,
+    "Flexible" = 1,
+    "Non-flexible" = 1
+  )) +
+  
+  labs(
+    title = "",
+    x = "Weeks relative to app access",
+    y = "Change in daily consumption (kWh)",
+    color = NULL
+  ) +
+  
+  theme_minimal(base_size = 14) +
+  theme(
+    panel.grid.minor = element_blank(),
+    panel.grid.major.x = element_blank(),
+    
+    plot.title = element_text(size = 10, face = "bold"),
+    
+    legend.position = "bottom",
+    legend.title = element_blank()
+  ) +
+  
+  # remove unnecessary legends
+  guides(
+    size = "none",
+    linetype = "none"
+  )
+
+gg_combined2
