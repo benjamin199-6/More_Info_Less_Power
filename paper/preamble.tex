@@ -68,6 +68,7 @@
 \usepackage{booktabs}
 \usepackage{adjustbox}
 \usepackage{lscape}
+\usepackage{float}
 \usepackage{pdflscape}
 \usepackage{dcolumn}
 \usepackage{tabularx}
@@ -93,6 +94,13 @@
 \usepackage{vcell}
 \usepackage{ragged2e}
 \usepackage{tabularray}
+
+
+% Paragraph spacing instead of manual \\
+\usepackage{parskip} 
+\setlength{\parskip}{1em}    % Space between paragraphs
+\setlength{\parindent}{0pt}   % No indentation at the start of paragraphs
+
 
 % TikZ / Gantt
 \usepackage{standalone}
@@ -140,7 +148,7 @@
   \clearlist{language}
 }
 
-\addbibresource{bibliography.bib}
+\addbibresource{references.bib}
 
 \setcounter{biburllcpenalty}{7000}
 \setcounter{biburlucpenalty}{8000}
