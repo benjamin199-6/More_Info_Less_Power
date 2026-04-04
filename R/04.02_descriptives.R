@@ -176,7 +176,7 @@ dt_15[, post := fcase(
 dt_hourly[, rel_day := as.integer(date - treat_date)]
 dt_15[, rel_day := as.integer(date - treat_date)]
 
-# Define tranche variable
+# Define tranc  he variable
 dt_hourly[, tranche := fcase(
   Tranche1 == 1, "Tranche 1",
   Tranche2 == 1, "Tranche 2",

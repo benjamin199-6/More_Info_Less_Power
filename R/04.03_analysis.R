@@ -613,3 +613,16 @@ gg_combined2 <- ggplot(df_all, aes(x = week, y = estimate, color = type)) +
   )
 
 gg_combined2
+
+
+ggsave(
+  filename = file.path(paths$output_figures, "event_study_consumption.png"),
+  plot = gg_combined2,
+  width = 7,
+  height = 4.5,
+  units = "in",
+  dpi = 300
+)
+
+etable(
+  m_total, m_flex, m_inflex)
